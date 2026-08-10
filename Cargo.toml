@@ -1,0 +1,19 @@
+[package]
+name = "titan"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ahash = "0.8.12"
+arrow = "59.2.0"
+arrow-ord = "59.2.0"
+async-trait = "0.1.92"
+futures = "0.3.33"
+hashbrown = "0.17.1"
+mimalloc = "0.1.52"
+object_store = "0.14.1"
+parquet = { version = "59.2.0", features = ["async"] }
+sqlparser = "0.62.0"
+tokio = { version = "1.53.1", features = ["full"] }
+tokio-stream = "0.1.19"
+tracing = "0.1.44"
