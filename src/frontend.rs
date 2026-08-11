@@ -102,21 +102,13 @@ async fn plan_select(query: Query) -> Result<Arc<dyn ExecutionPlan>, Box<dyn std
         }
     }
 
-    // Wrap each pipeline in a TaskScheduler (parallel async execution)
-    for pipeline in &mut pipelines {
-        *pipeline = Arc::new(TaskSchedulerExec::new(pipeline.clone()));
-    }
-
-    let final_plan: Arc<dyn ExecutionPlan>;
-
-    if has_group_by {
-        use crate::execution::aggregate::MergeAggregateExec;
-        final_plan = Arc::new(MergeAggregateExec::new(pipelines));
-    } else {
-        // If there is no group by, we can just return one of them or a union.
-        // For MVP, we assume group by is always present if pipelines > 1
-        final_plan = pipelines.into_iter().next().unwrap();
-    }
+    // Instead of binding 1 pipeline to 1 Tokio task, we pass all pipelines (morsels)
+    // to our MorselSchedulerExec. We will use a pool of worker threads.
+    // For this engine, we default to the number of physical CPU cores (e.g., 8).
+    let num_workers = num_cpus::get_physical();
+    
+    use crate::execution::morsel_scheduler::MorselSchedulerExec;
+    let final_plan: Arc<dyn ExecutionPlan> = Arc::new(MorselSchedulerExec::new(pipelines, num_workers));
 
     Ok(final_plan)
 }
