@@ -76,17 +76,22 @@ impl ExecutionPlan for MorselSchedulerExec {
             let mut global_hash_table: HashMap<String, i64> = HashMap::new();
             
             while let Ok(batch_result) = result_rx.recv().await {
-                if let Ok(batch) = batch_result {
-                    let group_col = batch.column(0);
-                    let string_array = group_col.as_any().downcast_ref::<StringArray>().unwrap();
-                    let sum_col = batch.column(1);
-                    let int_array = sum_col.as_any().downcast_ref::<Int64Array>().unwrap();
-                    
-                    for i in 0..batch.num_rows() {
-                        if string_array.is_null(i) || int_array.is_null(i) { continue; }
-                        let group_key = string_array.value(i).to_string();
-                        let sum_val = int_array.value(i);
-                        *global_hash_table.entry(group_key).or_insert(0) += sum_val;
+                match batch_result {
+                    Ok(batch) => {
+                        let group_col = batch.column(0);
+                        let string_array = group_col.as_any().downcast_ref::<StringArray>().unwrap();
+                        let sum_col = batch.column(1);
+                        let int_array = sum_col.as_any().downcast_ref::<Int64Array>().unwrap();
+                        
+                        for i in 0..batch.num_rows() {
+                            if string_array.is_null(i) || int_array.is_null(i) { continue; }
+                            let group_key = string_array.value(i).to_string();
+                            let sum_val = int_array.value(i);
+                            *global_hash_table.entry(group_key).or_insert(0) += sum_val;
+                        }
+                    },
+                    Err(e) => {
+                        eprintln!("Worker error: {:?}", e);
                     }
                 }
             }

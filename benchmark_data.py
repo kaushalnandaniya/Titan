@@ -11,6 +11,9 @@ def generate_data(num_rows, filename):
     }
 
     df = pd.DataFrame(data)
+    # Cast department to a category so PyArrow writes it using Dictionary Encoding
+    df['department'] = df['department'].astype('category')
+    
     # We set row_group_size to 100,000 to ensure we have multiple partitions for large datasets
     df.to_parquet(filename, engine='pyarrow', row_group_size=100000)
     print(f"Saved {filename}")

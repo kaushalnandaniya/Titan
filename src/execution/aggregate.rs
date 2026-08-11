@@ -1,5 +1,5 @@
 use super::physical_plan::{ExecutionPlan, SendableRecordBatchStream};
-use arrow::array::{Array, ArrayRef, Int64Array, StringArray};
+use arrow::array::{Array, ArrayRef, Int64Array, StringArray, DictionaryArray};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
@@ -34,39 +34,60 @@ impl ExecutionPlan for HashAggregateExec {
         
         // This is a blocking operator. We must consume the entire child stream
         // to compute the final aggregation before we can yield any output.
-        let mut hash_table: HashMap<String, i64> = HashMap::new();
+        let mut hash_table: HashMap<i8, i64> = HashMap::new();
+        let mut dict_values: Option<StringArray> = None;
         
         while let Some(batch_result) = child_stream.next().await {
             let batch = batch_result?;
             
-            // 1. Get the grouping column (Utf8)
+            // 1. Get the grouping column (now a DictionaryArray)
             let group_col = batch.column(self.group_col_index);
-            let string_array = group_col.as_any().downcast_ref::<StringArray>()
-                .ok_or_else(|| Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, "Group column is not a StringArray")) as Box<dyn std::error::Error + Send + Sync>)?;
+            let dict_array = group_col.as_any().downcast_ref::<DictionaryArray<arrow::datatypes::Int8Type>>()
+                .ok_or_else(|| Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, "Group column is not a DictionaryArray")) as Box<dyn std::error::Error + Send + Sync>)?;
+            
+            // Extract the dictionary strings (only need to do this once per row group ideally, but we capture the latest one)
+            let values = dict_array.values();
+            if dict_values.is_none() {
+                dict_values = Some(values.as_any().downcast_ref::<StringArray>().unwrap().clone());
+            }
+            
+            let keys_array = dict_array.keys();
             
             // 2. Get the aggregation column (Int64)
             let sum_col = batch.column(self.sum_col_index);
             let int_array = sum_col.as_any().downcast_ref::<Int64Array>()
                 .ok_or_else(|| Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, "Sum column is not an Int64Array")) as Box<dyn std::error::Error + Send + Sync>)?;
             
-            // 3. Iterate and accumulate in the hash table
+            // 3. Iterate and accumulate in the hash table using INTEGER keys (blazing fast!)
             for i in 0..batch.num_rows() {
-                if string_array.is_null(i) || int_array.is_null(i) {
+                if keys_array.is_null(i) || int_array.is_null(i) {
                     continue;
                 }
                 
-                let group_key = string_array.value(i).to_string();
+                let group_key_id = keys_array.value(i);
                 let sum_val = int_array.value(i);
                 
-                *hash_table.entry(group_key).or_insert(0) += sum_val;
+                // We do not convert to string here! We just group by the i32 integer.
+                *hash_table.entry(group_key_id).or_insert(0) += sum_val;
             }
         }
         
-        // 4. We've consumed the entire stream. Now we build the output RecordBatch.
+        // 4. We've consumed the entire stream. Now we Late-Materialize!
+        // We decode the resulting small hash table (e.g. 4 entries) back into Strings.
+        let mut string_hash_table: HashMap<String, i64> = HashMap::new();
+        if let Some(values_array) = dict_values {
+            for (key_id, sum) in hash_table {
+                let string_val = values_array.value(key_id as usize).to_string();
+                string_hash_table.insert(string_val, sum);
+            }
+        } else {
+            println!("dict_values is None!");
+        }
+        
         let mut output_groups = Vec::new();
         let mut output_sums = Vec::new();
         
-        for (group, sum) in hash_table {
+        for (group, sum) in string_hash_table {
             output_groups.push(group);
             output_sums.push(sum);
         }
