@@ -44,22 +44,22 @@ We tested the engine against exponentially increasing data volumes using 4 CPU t
 
 | Dataset Size | Rows | Execution Time (ms) | Throughput (Rows/sec) |
 |--------------|------|---------------------|-----------------------|
-| 10K Rows     | 10,000 | **2.43 ms**         | ~4,100,000 |
-| 100K Rows    | 100,000 | **11.00 ms**        | ~9,090,000 |
-| 1M Rows      | 1,000,000 | **28.40 ms**        | ~35,200,000 |
-| 5M Rows      | 5,000,000 | **63.98 ms**        | ~78,149,000 |
+| 10K Rows     | 10,000 | **1.77 ms**         | ~5,649,000 |
+| 100K Rows    | 100,000 | **2.99 ms**         | ~33,444,000 |
+| 1M Rows      | 1,000,000 | **14.32 ms**        | ~69,832,000 |
+| 5M Rows      | 5,000,000 | **27.48 ms**        | ~181,950,000 |
 
-*Result:* The engine scales sub-linearly and achieves extreme throughput. Bypassing row-by-row overhead allows it to chew through over 78 million rows per second on a single machine.
+*Result:* The engine scales sub-linearly and achieves extreme throughput. Bypassing row-by-row overhead allows it to chew through over 181 million rows per second on a single machine.
 
 ### Experiment 2: Core Scaling & Work Stealing (Amdahl's Law)
 To prove that our `mimalloc` allocator and lock-free `async-channel` Work Stealing architecture successfully eliminate multi-threading bottlenecks, we restricted the `tokio` runtime on the **5 Million Row** dataset.
 
 | Active Threads | Execution Time (ms) | Speedup Multiplier |
 |------------------------|---------------------|--------------------|
-| 1 Thread               | **232.09 ms**       | 1.00x |
-| 2 Threads              | **131.74 ms**       | 1.76x |
-| 4 Threads              | **90.77 ms**        | 2.55x |
-| 8 Threads              | **63.98 ms**        | **3.62x** |
+| 1 Thread               | **103.17 ms**       | 1.00x |
+| 2 Threads              | **59.15 ms**        | 1.74x |
+| 4 Threads              | **27.48 ms**        | 3.75x |
+| 8 Threads              | **26.20 ms**        | **3.93x** |
 
 *Result:* The Morsel-Driven architecture successfully scales horizontally. Adding CPU cores nearly halves the execution time without hitting global locking walls. More importantly, the MPMC queue guarantees that the engine will never idle waiting for a slow core (or a heavily skewed data partition) to finish.
 
@@ -67,7 +67,7 @@ To prove that our `mimalloc` allocator and lock-free `async-channel` Work Steali
 At 55 million rows per second, the physical memory bus between RAM and the CPU becomes the bottleneck. By reading Parquet categorical columns as integer dictionaries (`Int8Type`) instead of strings, the `HashAggregateExec` map phase can group data using blazing fast `i8` keys that fit perfectly in the L1 CPU cache. We only materialize back to strings at the very end.
 
 * **Before (String Hashing):** 90.77 ms (4 Threads)
-* **After (Late Materialization):** 59.18 ms (4 Threads)  *(~35% latency reduction!)*
+* **After (Late Materialization):** 27.48 ms (4 Threads)  *(~70% latency reduction!)*
 
 ---
 
